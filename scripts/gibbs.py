@@ -54,14 +54,14 @@ def kernel(rng_key: jax.Array, state: Dict) -> Dict:
     A simple sampler for the horseshoe estimator
     https://arxiv.org/pdf/1508.03884.pdf
 
-    """
+    """    
     state = state.copy()
 
     inv_lambda_s = jnp.diag(1 / state["lambda2"]) / state["tau2"]
     inv_a = jnp.linalg.inv(jnp.matmul(x.T, x) + inv_lambda_s)
 
     state["beta"] = jax.random.multivariate_normal(
-        key=rng_key,
+        key=rng_key[0],
         mean=jnp.dot(jnp.matmul(inv_a, x.T), y),
         cov=state["sigma2"] * inv_a,
         method="cholesky",
@@ -72,26 +72,26 @@ def kernel(rng_key: jax.Array, state: Dict) -> Dict:
         jnp.dot(err.T, err) / 2.0
         + (jnp.sum(jnp.square(state["beta"]) / state["lambda2"]) / state["tau2"]) / 2.0
     )
-    state["sigma2"] = sigma2_scale / jax.random.gamma(rng_key, a=(n + p) / 2.0)
+    state["sigma2"] = sigma2_scale / jax.random.gamma(rng_key[1], a=(n + p) / 2.0)
 
     lambda2_scale = 1.0 / state["nu"] + jnp.square(state["beta"]) / (
         2.0 * state["tau2"] * state["sigma2"]
     )
     state["lambda2"] = lambda2_scale / jax.random.exponential(
-        rng_key, shape=state["lambda2"].shape
+        rng_key[2], shape=state["lambda2"].shape
     )
 
     tau2_scale = 1.0 / state["xi"] + jnp.sum(
         jnp.square(state["beta"]) / state["lambda2"]
     ) / (2.0 * state["sigma2"])
-    state["tau2"] = tau2_scale / jax.random.gamma(rng_key, a=(p + 1.0) / 2.0)
+    state["tau2"] = tau2_scale / jax.random.gamma(rng_key[3], a=(p + 1.0) / 2.0)
 
     state["nu"] = 1.0 / (
-        jax.random.exponential(rng_key, shape=state["lambda2"].shape)
+        jax.random.exponential(rng_key[4], shape=state["lambda2"].shape)
         * (state["lambda2"] / (state["lambda2"] + 1))
     )
     state["xi"] = 1.0 / (
-        jax.random.exponential(rng_key) * (state["tau2"] / (state["tau2"] + 1))
+        jax.random.exponential(rng_key[5]) * (state["tau2"] / (state["tau2"] + 1))
     )
 
     return state
@@ -115,7 +115,7 @@ def inference_loop(rng_key: jax.Array, initial_state: Dict, num_iter: int) -> Di
         positions = {k: state[k] for k in state.keys()}
         return state, positions
 
-    keys = jax.random.split(rng_key, num_iter)
+    keys = jax.random.split(rng_key, (num_iter, 6))
     _, positions = jax.lax.scan(one_step, initial_state, keys)
 
     return positions
@@ -135,8 +135,13 @@ def concatenate_chains(chains: List[Dict]):
 
 def apply_burnin_thinning(vars: Dict, num_burnin: int, thin: int) -> Dict:
     """Thin samples by keeping only samples defined by stepsize `thin`"""
-    correct_vars = {k: vars[k][..., np.newaxis] if vars[k].ndim == 2 else vars[k] for k in vars.keys()}
-    thinned_vars = {k: correct_vars[k][:, num_burnin::thin, :] for k in correct_vars.keys()}
+    correct_vars = {
+        k: vars[k][..., np.newaxis] if vars[k].ndim == 2 else vars[k]
+        for k in vars.keys()
+    }
+    thinned_vars = {
+        k: correct_vars[k][:, num_burnin::thin, :] for k in correct_vars.keys()
+    }
     return thinned_vars
 
 
@@ -179,7 +184,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-data", nargs="?", default=1_000, type=int)
     parser.add_argument("--num-features", nargs="?", default=200, type=int)
     parser.add_argument("--thin", nargs="?", default=5, type=int)
-    parser.add_argument("--seed", nargs="?", default=387491734, type=int)
+    parser.add_argument("--seed", nargs="?", default=823743009, type=int)
 
     args = parser.parse_args()
 
@@ -190,6 +195,7 @@ if __name__ == "__main__":
 
     states = []
 
+    # for more complex kernels / longer chains this can be run in parallel
     for i in range(args.num_chains):
         rng_key, rng_key_ = jax.random.split(rng_key)
 
